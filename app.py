@@ -1,4 +1,3 @@
-
 """Streamlit dashboard for generic CRUD against Supabase Data API.
 
 Run:
@@ -8,7 +7,6 @@ Run:
 
 from __future__ import annotations
 
-import json
 from datetime import date, datetime
 from typing import Any
 from urllib.parse import quote
@@ -43,6 +41,8 @@ st.markdown(
 
 REQUEST_TIMEOUT = 20
 ROW_LIMIT = 1_000
+SUPABASE_URL = "https://hwpioueaigcxlmutfjgp.supabase.co"
+SUPABASE_KEY = "sb_publishable_kmzOOPU1ScN8nLnYxoWZvA_kbvwdxZ0"
 
 # 현재 프로젝트에서 확인한 테이블/컬럼 스키마입니다.
 # 실제 행 데이터는 포함하지 않으며 모든 데이터는 실행 시 Supabase에서 조회합니다.
@@ -127,27 +127,6 @@ TABLE_DEFINITIONS: dict[str, dict[str, Any]] = {
         },
     },
 }
-
-
-def clean_url(value: str) -> str:
-    return value.strip().rstrip("/")
-
-
-def is_privileged_key(key: str) -> bool:
-    """Block secret/service-role keys from a browser-like dashboard."""
-    if key.strip().startswith("sb_secret_"):
-        return True
-    parts = key.strip().split(".")
-    if len(parts) != 3:
-        return False
-    try:
-        import base64
-
-        payload = parts[1] + "=" * (-len(parts[1]) % 4)
-        decoded = base64.urlsafe_b64decode(payload).decode("utf-8")
-        return json.loads(decoded).get("role") == "service_role"
-    except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
-        return False
 
 
 def headers(prefer: str | None = None) -> dict[str, str]:
@@ -274,60 +253,26 @@ def row_label(row: dict[str, Any], pk: str, index: int) -> str:
     return f"{pk}={row.get(pk)}" + (f" | {suffix}" if suffix else f" | #{index + 1}")
 
 
-def connect() -> None:
-    url = clean_url(st.session_state.url_input)
-    key = st.session_state.key_input.strip()
-    if not url.startswith("https://") or not key:
-        st.sidebar.error("올바른 HTTPS URL과 공개 키를 입력하세요.")
-        return
-    if is_privileged_key(key):
-        st.sidebar.error("secret/service_role 키는 사용할 수 없습니다.")
-        return
-    st.session_state.supabase_url = url
-    st.session_state.api_key = key
-    try:
-        first_table = next(iter(TABLE_DEFINITIONS))
-        api_request("GET", f"/rest/v1/{first_table}?select=*&limit=1")
-        st.session_state.tables = TABLE_DEFINITIONS
-        st.session_state.connected = True
-    except (requests.RequestException, RuntimeError, ValueError) as exc:
-        st.session_state.connected = False
-        st.sidebar.error(str(exc))
-
-
-for key, default in {
-    "connected": False,
-    "supabase_url": "",
-    "api_key": "",
-    "tables": {},
-}.items():
-    st.session_state.setdefault(key, default)
+st.session_state.supabase_url = SUPABASE_URL
+st.session_state.api_key = SUPABASE_KEY
+st.session_state.tables = TABLE_DEFINITIONS
 
 st.title("🗄️ Supabase DB 통합관리")
 st.caption("현재 Supabase 프로젝트의 모든 6개 테이블을 조회·등록·수정·삭제합니다.")
 
+try:
+    first_table = next(iter(TABLE_DEFINITIONS))
+    api_request("GET", f"/rest/v1/{first_table}?select=*&limit=1")
+except (requests.RequestException, RuntimeError) as exc:
+    st.error(f"Supabase 자동 연결 실패: {exc}")
+    st.stop()
+
 with st.sidebar:
-    st.header("DB 연결")
-    st.text_input(
-        "Supabase URL",
-        placeholder="https://project-ref.supabase.co",
-        key="url_input",
-    )
-    st.text_input(
-        "Publishable / anon key",
-        type="password",
-        placeholder="브라우저용 공개 키",
-        key="key_input",
-    )
-    st.button("연결 및 테이블 조회", type="primary", use_container_width=True, on_click=connect)
+    st.success("Supabase 연결됨")
     st.markdown(
-        '<div class="warning-box">로그인 없이 CRUD가 가능한 프로젝트에서는 공개 키를 가진 누구나 데이터를 변경·삭제할 수 있습니다. secret/service_role 키는 입력하지 마세요.</div>',
+        '<div class="warning-box">로그인 없는 공개 CRUD 구성입니다. 공개 키를 가진 누구나 데이터를 변경·삭제할 수 있습니다.</div>',
         unsafe_allow_html=True,
     )
-
-if not st.session_state.connected:
-    st.info("왼쪽에서 Supabase URL과 publishable/anon 키를 입력해 연결하세요.")
-    st.stop()
 
 table_names = sorted(st.session_state.tables)
 selected_table = st.sidebar.selectbox("테이블", table_names)
